@@ -10,6 +10,7 @@ PLAIN='\033[0m'
 # 配置文件路径
 SNIPROXY_CONF="/etc/sniproxy.conf"
 DNSMASQ_CONF="/etc/dnsmasq.conf"
+DNSMASQ_UNLOCK_FILE="/etc/dnsmasq.conf"
 
 # 检查 root 权限
 if [[ $EUID -ne 0 ]]; then
@@ -94,20 +95,13 @@ config_dnsmasq_base() {
     fi
 
     # 这里的 listen-address 设为 0.0.0.0 配合防火墙使用更稳健
-    # 关键修改：直接在主配置中预留规则区域
     cat > $DNSMASQ_CONF <<EOF
 listen-address=$HOST_IP,127.0.0.1
 server=8.8.8.8
-# conf-dir=/etc/dnsmasq.d # 已注释，不再依赖外部文件夹
-
-####################################
-# === UNLOCK RULES START ===
-####################################
-
-####################################
-# === UNLOCK RULES END ===
-####################################
+conf-dir=/etc/dnsmasq.d
 EOF
+    
+    touch $DNSMASQ_UNLOCK_FILE
     
     systemctl enable dnsmasq
     systemctl restart dnsmasq
@@ -123,8 +117,8 @@ manage_domains() {
         return
     fi
     
-    # 获取当前 IP (从现有规则中抓取，或者重新询问)
-    CURRENT_HOST_IP=$(grep "address=" $DNSMASQ_CONF | head -n 1 | cut -d/ -f3)
+    # 获取当前 IP 用于写入规则
+    CURRENT_HOST_IP=$(grep "address=" $DNSMASQ_UNLOCK_FILE | head -n 1 | cut -d/ -f3)
     if [[ -z "$CURRENT_HOST_IP" ]]; then
         get_host_ip
     else
@@ -132,7 +126,7 @@ manage_domains() {
     fi
 
     while true; do
-        echo -e "\n${YELLOW}--- 域名管理菜单 (单文件模式) ---${PLAIN}"
+        echo -e "\n${YELLOW}--- 域名管理菜单 ---${PLAIN}"
         echo "1. 查看当前解锁域名"
         echo "2. 添加解锁域名"
         echo "3. 删除解锁域名"
@@ -140,46 +134,31 @@ manage_domains() {
         echo "5. 生成客户端配置文件 (复制用)"
         echo "6. 清空所有域名"
         echo "0. 返回主菜单"
-        echo "------------------------------"
         read -p "请选择: " sub_choice
         
         case $sub_choice in
             1)
                 echo -e "${GREEN}当前列表:${PLAIN}"
-                # 仅筛选 address 行
-                grep "address=" $DNSMASQ_CONF | grep -v "::" | cut -d/ -f2
+                grep "address=" $DNSMASQ_UNLOCK_FILE | grep -v "::" | cut -d/ -f2
                 ;;
             2)
                 read -p "请输入要解锁的主域名 (如 netflix.com): " domain
                 if [[ -z "$domain" ]]; then continue; fi
-                
-                # 使用 sed 在 END 标记前插入规则
-                # 插入 IPv4 规则
-                sed -i "/# === UNLOCK RULES END ===/i address=/$domain/$HOST_IP" $DNSMASQ_CONF
-                # 插入 IPv6 屏蔽规则
-                sed -i "/# === UNLOCK RULES END ===/i address=/$domain/::" $DNSMASQ_CONF
-                
+                echo "address=/$domain/$HOST_IP" >> $DNSMASQ_UNLOCK_FILE
+                echo "address=/$domain/::" >> $DNSMASQ_UNLOCK_FILE
                 systemctl restart dnsmasq
                 echo -e "${GREEN}已添加: $domain${PLAIN}"
                 ;;
             3)
                 read -p "请输入要删除的域名: " domain
                 if [[ -z "$domain" ]]; then continue; fi
-                
-                # 直接在主文件中删除包含该域名的 address 行
-                sed -i "/address=\/$domain\//d" $DNSMASQ_CONF
-                
+                sed -i "/\/$domain\//d" $DNSMASQ_UNLOCK_FILE
                 systemctl restart dnsmasq
                 echo -e "${GREEN}已删除: $domain${PLAIN}"
                 ;;
             4)
                 echo -e "${YELLOW}正在导入全套预设...${PLAIN}"
-                
-                # 1. 清空 START 和 END 之间的内容
-                sed -i '/# === UNLOCK RULES START ===/,/# === UNLOCK RULES END ===/{//!d}' $DNSMASQ_CONF
-
-                # 2. 生成临时规则文件
-                cat > /tmp/dnsmasq_rules.tmp <<EOF
+                cat > $DNSMASQ_UNLOCK_FILE <<EOF
 # --- Netflix ---
 address=/netflix.com/$HOST_IP
 address=/netflix.net/$HOST_IP
@@ -246,21 +225,21 @@ address=/bing.com/::
 address=/copilot.microsoft.com/::
 address=/openai.azure.com/::
 EOF
-                # 3. 将临时文件内容读入到 START 标记之后
-                sed -i '/# === UNLOCK RULES START ===/r /tmp/dnsmasq_rules.tmp' $DNSMASQ_CONF
-                rm -f /tmp/dnsmasq_rules.tmp
-                
                 systemctl restart dnsmasq
                 echo -e "${GREEN}预设导入完成。${PLAIN}"
                 ;;
             5)
                 # 生成客户端配置逻辑
                 echo -e "\n${BLUE}========== 客户端 Dnsmasq 配置文件内容 ==========${PLAIN}"
-                echo -e "${YELLOW}# 请将以下内容复制到客户端 VPS 的 /etc/dnsmasq.conf 或相关配置中${PLAIN}\n"
+                echo -e "${YELLOW}# 请将以下内容复制到客户端 VPS 的 /etc/dnsmasq.d/unlock.conf 文件中${PLAIN}"
+                echo -e "${YELLOW}# 或者添加到 /etc/dnsmasq.conf 末尾${PLAIN}\n"
                 
-                # 直接读取主文件生成配置
-                grep "address=" $DNSMASQ_CONF | grep -v "::" | while read -r line; do
+                # 读取规则文件，提取域名，转换为 server=/domain/HOST_IP 格式
+                # 过滤掉 :: (IPv6屏蔽行)，只保留 IPv4 转发
+                grep "address=" $DNSMASQ_UNLOCK_FILE | grep -v "::" | while read -r line; do
+                    # 提取域名 (cut -d/ -f2)
                     DOMAIN=$(echo $line | cut -d/ -f2)
+                    # 输出客户端格式
                     echo "server=/$DOMAIN/$HOST_IP"
                 done
                 
@@ -270,8 +249,7 @@ EOF
                 read -p "按回车键继续..."
                 ;;
             6)
-                # 清空规则：删除 START 和 END 之间的内容
-                sed -i '/# === UNLOCK RULES START ===/,/# === UNLOCK RULES END ===/{//!d}' $DNSMASQ_CONF
+                echo "" > $DNSMASQ_UNLOCK_FILE
                 systemctl restart dnsmasq
                 echo -e "${GREEN}已清空规则。${PLAIN}"
                 ;;
@@ -360,7 +338,7 @@ manage_firewall() {
 main_menu() {
     clear
     echo -e "${YELLOW}====================================${PLAIN}"
-    echo -e "${YELLOW}   DNS 解锁服务管理脚本 v2.3 (单文件版)   ${PLAIN}"
+    echo -e "${YELLOW}   DNS 解锁服务管理脚本 v2.2   ${PLAIN}"
     echo -e "${YELLOW}====================================${PLAIN}"
     echo "1. 全新安装 (安装环境 + 初始化配置)"
     echo "2. 域名管理 (添加/删除/导入预设/生成客户端配置)"
