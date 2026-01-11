@@ -102,8 +102,7 @@ config_dnsmasq_base() {
 
     # 这里的 listen-address 设为 0.0.0.0 配合防火墙使用更稳健
     cat > $DNSMASQ_CONF <<EOF
-listen-address=::,0.0.0.0
-bind-interfaces
+listen-address=$HOST_IP,127.0.0.1
 server=8.8.8.8
 conf-dir=/etc/dnsmasq.d
 EOF
