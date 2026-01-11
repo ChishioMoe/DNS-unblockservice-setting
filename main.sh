@@ -88,13 +88,6 @@ config_dnsmasq_base() {
     fi
 
     get_host_ip
-    
-    # 强制修改 resolv.conf 防止死循环
-    echo -e "${GREEN}正在优化系统 DNS (防止回环死循环)...${PLAIN}"
-    rm -f /etc/resolv.conf
-    echo "nameserver 8.8.8.8" > /etc/resolv.conf
-    # 尝试锁定文件 (如果不报错的话)
-    chattr +i /etc/resolv.conf >/dev/null 2>&1
 
     echo -e "${GREEN}正在配置 Dnsmasq 基础设置...${PLAIN}"
     if [ ! -f "${DNSMASQ_CONF}.bak" ]; then
@@ -327,7 +320,7 @@ manage_firewall() {
                 iptables -A INPUT -p tcp --dport 80 -j DROP
                 iptables -A INPUT -p tcp --dport 443 -j DROP
                 
-                save_firewall
+                netfilter-persistent save
                 echo -e "${GREEN}防火墙已重置，仅允许 $INIT_IP${PLAIN}"
                 ;;
             0)
@@ -373,7 +366,7 @@ main_menu() {
                  iptables -A INPUT -p tcp --dport 53 -j DROP
                  iptables -A INPUT -p tcp --dport 80 -j DROP
                  iptables -A INPUT -p tcp --dport 443 -j DROP
-                 save_firewall
+                 netfilter-persistent save
             fi
             echo -e "${GREEN}安装全部完成！${PLAIN}"
             ;;
