@@ -50,8 +50,9 @@ save_firewall() {
 
 install_env() {
     echo -e "${GREEN}正在更新软件源并安装依赖...${PLAIN}"
-    apt update
-    apt install sniproxy dnsmasq iptables iptables-persistent netfilter-persistent dnsutils -y
+    apt-get upgrade
+    apt-get update
+    apt-get install sniproxy dnsmasq iptables iptables-persistent netfilter-persistent dnsutils -y
 
     echo -e "${GREEN}正在配置 SNIProxy...${PLAIN}"
     cat > $SNIPROXY_CONF <<EOF
