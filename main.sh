@@ -159,6 +159,8 @@ manage_domains() {
             4)
                 echo -e "${YELLOW}正在导入全套预设...${PLAIN}"
                 cat > $DNSMASQ_UNLOCK_FILE <<EOF
+listen-address=$HOST_IP,127.0.0.1
+server=8.8.8.8
 # --- Netflix ---
 address=/netflix.com/$HOST_IP
 address=/netflix.net/$HOST_IP
