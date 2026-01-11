@@ -117,13 +117,7 @@ manage_domains() {
         return
     fi
     
-    # 获取当前 IP 用于写入规则
-    CURRENT_HOST_IP=$(grep "address=" $DNSMASQ_UNLOCK_FILE | head -n 1 | cut -d/ -f3)
-    if [[ -z "$CURRENT_HOST_IP" ]]; then
-        get_host_ip
-    else
-        HOST_IP=$CURRENT_HOST_IP
-    fi
+get_host_ip
 
     while true; do
         echo -e "\n${YELLOW}--- 域名管理菜单 ---${PLAIN}"
