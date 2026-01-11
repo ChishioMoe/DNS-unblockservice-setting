@@ -320,7 +320,7 @@ manage_firewall() {
                 iptables -A INPUT -p tcp --dport 80 -j DROP
                 iptables -A INPUT -p tcp --dport 443 -j DROP
                 
-                netfilter-persistent save
+                save_firewall
                 echo -e "${GREEN}防火墙已重置，仅允许 $INIT_IP${PLAIN}"
                 ;;
             0)
@@ -366,7 +366,7 @@ main_menu() {
                  iptables -A INPUT -p tcp --dport 53 -j DROP
                  iptables -A INPUT -p tcp --dport 80 -j DROP
                  iptables -A INPUT -p tcp --dport 443 -j DROP
-                 netfilter-persistent save
+                 save_firewall
             fi
             echo -e "${GREEN}安装全部完成！${PLAIN}"
             ;;
