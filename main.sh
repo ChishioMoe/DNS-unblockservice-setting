@@ -41,6 +41,7 @@ save_firewall() {
 install_env() {
     echo -e "${GREEN}正在更新软件源并安装依赖...${PLAIN}"
     apt update
+    # 强制尝试修复并安装 dnsmasq
     apt install sniproxy dnsmasq iptables iptables-persistent netfilter-persistent -y
 
     # 配置 SNIProxy
@@ -72,6 +73,12 @@ EOF
 }
 
 config_dnsmasq_base() {
+    # 检查是否安装成功，如果失败尝试手动启动
+    if ! command -v dnsmasq &> /dev/null; then
+        echo -e "${RED}Dnsmasq 未安装成功，尝试重新安装...${PLAIN}"
+        apt install dnsmasq -y
+    fi
+
     get_host_ip
     
     echo -e "${GREEN}正在配置 Dnsmasq 基础设置...${PLAIN}"
@@ -87,6 +94,11 @@ conf-dir=/etc/dnsmasq.d
 EOF
     
     touch $DNSMASQ_UNLOCK_FILE
+    
+    # 确保服务启动
+    systemctl enable dnsmasq
+    systemctl restart dnsmasq
+    
     echo -e "${GREEN}Dnsmasq 基础配置完成 (IP: $HOST_IP)。${PLAIN}"
 }
 
@@ -181,7 +193,7 @@ EOF
     done
 }
 
-# --- 防火墙管理功能 (新版) ---
+# --- 防火墙管理功能 (修复 grep 问题) ---
 
 manage_firewall() {
     while true; do
@@ -189,21 +201,21 @@ manage_firewall() {
         echo "1. 查看已允许的客户端 IP"
         echo "2. 添加允许连接的客户端 IP"
         echo "3. 删除允许连接的客户端 IP"
-        echo "4. 初始化/重置防火墙 (清空所有，只留一个新IP)"
+        echo "4. 初始化/重置防火墙 (慎用)"
         echo "0. 返回主菜单"
         read -p "请选择: " fw_choice
 
         case $fw_choice in
             1)
                 echo -e "${GREEN}当前允许的客户端 IP 列表:${PLAIN}"
-                # 提取 INPUT 链中源地址不为 0.0.0.0 的 ACCEPT 规则
-                iptables -S INPUT | grep "-j ACCEPT" | grep "-s" | awk '{for(i=1;i<=NF;i++) if($i=="-s") print $(i+1)}' | sort | uniq
+                # 【修复关键点】使用了 grep -e 来避免把参数当成 flag
+                iptables -S INPUT | grep -e "-j ACCEPT" | grep -e "-s" | awk '{for(i=1;i<=NF;i++) if($i=="-s") print $(i+1)}' | sort | uniq
                 ;;
             2)
                 read -p "请输入要【添加】的客户端 IP: " ADD_IP
                 if [[ -z "$ADD_IP" ]]; then echo -e "${RED}IP不能为空${PLAIN}"; continue; fi
                 
-                # 使用 -I (Insert) 插入到顶部，确保不被底部的 DROP 规则拦截
+                # 插入规则
                 iptables -I INPUT -s $ADD_IP -p udp --dport 53 -j ACCEPT
                 iptables -I INPUT -s $ADD_IP -p tcp --dport 53 -j ACCEPT
                 iptables -I INPUT -s $ADD_IP -p tcp --dport 80 -j ACCEPT
@@ -216,33 +228,30 @@ manage_firewall() {
                 read -p "请输入要【删除】的客户端 IP: " DEL_IP
                 if [[ -z "$DEL_IP" ]]; then echo -e "${RED}IP不能为空${PLAIN}"; continue; fi
                 
-                # 尝试删除对应的规则 (屏蔽错误信息，因为可能不存在)
+                # 删除规则
                 iptables -D INPUT -s $DEL_IP -p udp --dport 53 -j ACCEPT 2>/dev/null
                 iptables -D INPUT -s $DEL_IP -p tcp --dport 53 -j ACCEPT 2>/dev/null
                 iptables -D INPUT -s $DEL_IP -p tcp --dport 80 -j ACCEPT 2>/dev/null
                 iptables -D INPUT -s $DEL_IP -p tcp --dport 443 -j ACCEPT 2>/dev/null
                 
                 save_firewall
-                echo -e "${GREEN}已从白名单中移除 IP: $DEL_IP${PLAIN}"
+                echo -e "${GREEN}已移除 IP: $DEL_IP${PLAIN}"
                 ;;
             4)
                 echo -e "${RED}警告：這将清空所有现有规则！${PLAIN}"
                 read -p "请输入新的唯一客户端 IP: " INIT_IP
                 if [[ -z "$INIT_IP" ]]; then echo -e "${RED}IP不能为空${PLAIN}"; continue; fi
                 
-                # 初始化逻辑
                 iptables -P INPUT ACCEPT
                 iptables -F
                 iptables -A INPUT -i lo -j ACCEPT
                 iptables -A INPUT -p tcp --dport 22 -j ACCEPT
                 
-                # 添加新IP
                 iptables -A INPUT -s $INIT_IP -p udp --dport 53 -j ACCEPT
                 iptables -A INPUT -s $INIT_IP -p tcp --dport 53 -j ACCEPT
                 iptables -A INPUT -s $INIT_IP -p tcp --dport 80 -j ACCEPT
                 iptables -A INPUT -s $INIT_IP -p tcp --dport 443 -j ACCEPT
                 
-                # 拒绝其他
                 iptables -A INPUT -p udp --dport 53 -j DROP
                 iptables -A INPUT -p tcp --dport 53 -j DROP
                 iptables -A INPUT -p tcp --dport 80 -j DROP
@@ -266,7 +275,7 @@ manage_firewall() {
 main_menu() {
     clear
     echo -e "${YELLOW}====================================${PLAIN}"
-    echo -e "${YELLOW}   DNS 解锁服务管理脚本 v2.0   ${PLAIN}"
+    echo -e "${YELLOW}   DNS 解锁服务管理脚本 v2.1   ${PLAIN}"
     echo -e "${YELLOW}====================================${PLAIN}"
     echo "1. 全新安装 (安装环境 + 初始化配置)"
     echo "2. 域名管理 (添加/删除/导入预设)"
@@ -279,7 +288,6 @@ main_menu() {
         1)
             install_env
             config_dnsmasq_base
-            # 安装时直接调用防火墙初始化
             echo -e "${YELLOW}接下来进行防火墙初始化...${PLAIN}"
             read -p "请输入第一个允许连接的客户端 IP: " CLIENT_IP
             if [[ -n "$CLIENT_IP" ]]; then
